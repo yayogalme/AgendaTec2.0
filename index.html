@@ -1,0 +1,2558 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#059669">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AgendaTec">
+    <title>AgendaTec - Gestión de Juntas y Alertas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+        }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 12px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .alarm-pulse {
+            animation: pulse-ring 1.5s infinite;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-in {
+            animation: slideIn 0.25s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Contenedor de Notificaciones Toast -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+
+    <!-- Modal de Alarma Crítica (10 min, 5 min, Hora Exacta) -->
+    <div id="alarm-modal" class="fixed inset-0 z-50 hidden bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border-2 border-emerald-500 text-center alarm-pulse relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-emerald-500 via-teal-500 to-amber-500"></div>
+            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl">
+                <i class="fa-solid fa-bell fa-shake"></i>
+            </div>
+            <span id="alarm-badge" class="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 mb-2">
+                Aviso de Reunión
+            </span>
+            <h3 id="alarm-title" class="text-xl sm:text-2xl font-extrabold text-slate-900 mb-2">Reunión Próxima</h3>
+            <p id="alarm-desc" class="text-slate-600 text-sm mb-4">Detalles de la reunión</p>
+            <div class="bg-slate-50 rounded-2xl p-4 mb-6 text-left text-sm space-y-2 border border-slate-100">
+                <div class="flex items-center gap-2 text-slate-700">
+                    <i class="fa-solid fa-user-tie text-emerald-600 w-4"></i>
+                    <span>Convoca: <strong id="alarm-convener">...</strong></span>
+                </div>
+                <div class="flex items-center gap-2 text-slate-700">
+                    <i class="fa-solid fa-location-dot text-emerald-600 w-4"></i>
+                    <span id="alarm-location" class="font-medium">Sala de Juntas</span>
+                </div>
+                <div class="flex items-center gap-2 text-slate-700">
+                    <i class="fa-regular fa-clock text-emerald-600 w-4"></i>
+                    <span id="alarm-time" class="font-medium">10:00 AM</span>
+                </div>
+            </div>
+            <button onclick="dismissAlarm()" class="w-full py-3.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl shadow-lg shadow-emerald-200 transition active:scale-[0.98]">
+                Entendido / Detener Alarma
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal de Confirmación / Conflicto de Horario / Eliminación -->
+    <div id="confirm-modal" class="fixed inset-0 z-50 hidden bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div class="flex items-center gap-3 mb-3">
+                <div id="confirm-modal-icon" class="w-11 h-11 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <div>
+                    <h3 id="confirm-modal-title" class="text-lg font-bold text-slate-900">Confirmar acción</h3>
+                    <p id="confirm-modal-subtitle" class="text-xs text-slate-500">Verifica los detalles</p>
+                </div>
+            </div>
+            <div id="confirm-modal-body" class="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-sm text-slate-700 mb-5 space-y-1.5"></div>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeConfirmModal(false)" class="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition">
+                    Cancelar
+                </button>
+                <button type="button" id="confirm-modal-accept-btn" onclick="closeConfirmModal(true)" class="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition">
+                    Continuar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para Rechazar Reunión con Motivo -->
+    <div id="reject-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-xl border border-slate-100">
+            <h3 class="text-lg font-bold text-slate-900 mb-1">No asistiré a la reunión</h3>
+            <p class="text-sm text-slate-500 mb-4">Por favor indica el motivo por el cual no podrás asistir para notificar al organizador.</p>
+            <input type="hidden" id="reject-meeting-id">
+            <input type="hidden" id="reject-mode" value="declined">
+            <textarea id="reject-reason" rows="3" placeholder="Ej. Tengo otra reunión empalmada en ese horario..." class="w-full rounded-2xl border border-slate-200 p-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent mb-4"></textarea>
+            <div class="flex gap-3">
+                <button onclick="closeRejectModal()" class="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition">Cancelar</button>
+                <button onclick="confirmRejectMeeting()" class="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-medium rounded-xl shadow-sm transition">Enviar Motivo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Edición / Cancelación de Reunión (Para el creador) -->
+    <div id="edit-meeting-modal" class="fixed inset-0 z-50 hidden bg-slate-900/65 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 my-6">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-900">Modificar Reunión</h3>
+                        <p class="text-xs text-slate-500">Actualiza los datos o el estado de tu junta</p>
+                    </div>
+                </div>
+                <button type="button" onclick="closeEditMeetingModal()" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <form id="edit-meeting-form" class="space-y-4">
+                <input type="hidden" id="edit-meeting-id">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Motivo o Tema</label>
+                        <input type="text" id="edit-meeting-title" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Lugar o Enlace</label>
+                        <input type="text" id="edit-meeting-location" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Fecha y Hora</label>
+                        <input type="datetime-local" id="edit-meeting-datetime" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Estado de la Reunión</label>
+                        <select id="edit-meeting-status" class="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium">
+                            <option value="active">Activa / Programada</option>
+                            <option value="cancelled">Cancelada</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Participantes Convocados</label>
+                    <div id="edit-meeting-participants-list" class="max-h-40 overflow-y-auto border border-slate-200 rounded-2xl p-2 space-y-1 bg-slate-50"></div>
+                </div>
+
+                <div class="pt-2 flex flex-wrap gap-2 justify-between items-center border-t border-slate-100">
+                    <button type="button" onclick="deleteMeetingFromEdit()" class="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-xl text-xs transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-trash-can"></i> Eliminar Definitivamente
+                    </button>
+                    <div class="flex gap-2 ml-auto">
+                        <button type="button" onclick="closeEditMeetingModal()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition">
+                            Cerrar
+                        </button>
+                        <button type="submit" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-xs shadow-sm transition">
+                            Guardar Cambios
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal de Edición de Usuario (Solo Admin) -->
+    <div id="admin-edit-user-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold text-slate-900">Editar Usuario</h3>
+                <button onclick="closeAdminEditModal()" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <form id="admin-edit-user-form" class="space-y-3">
+                <input type="hidden" id="edit-user-id">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Nombre</label>
+                        <input type="text" id="edit-user-name" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Apellido</label>
+                        <input type="text" id="edit-user-lastname" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Puesto</label>
+                    <input type="text" id="edit-user-role" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Nombre de Usuario (Solo lectura)</label>
+                    <input type="text" id="edit-user-username" readonly class="w-full rounded-xl border border-slate-200 bg-slate-100 text-slate-500 px-3.5 py-2 text-sm outline-none cursor-not-allowed">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Contraseña</label>
+                    <input type="text" id="edit-user-password" required class="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                </div>
+                <div class="pt-3 flex gap-3">
+                    <button type="button" onclick="closeAdminEditModal()" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm transition">Cancelar</button>
+                    <button type="submit" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== VISTA 1: AUTENTICACIÓN ==================== -->
+    <div id="auth-view" class="flex-1 flex items-center justify-center p-4 bg-gradient-to-br from-emerald-50 via-white to-teal-50">
+        <div class="max-w-md w-full bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+            <div class="p-6 sm:p-8 bg-emerald-600 text-white text-center relative">
+                <div class="absolute top-3 right-3 flex items-center gap-1.5 bg-emerald-700/80 px-2.5 py-1 rounded-full text-[11px] font-medium">
+                    <span id="auth-sync-dot" class="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+                    <span id="auth-sync-text">Sincronizando...</span>
+                </div>
+                <div class="w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mx-auto mb-3 p-2.5 shadow-inner">
+                    <!-- Silueta de rostro de mapache -->
+                    <svg viewBox="0 0 100 100" class="w-full h-full fill-current text-white" aria-label="Silueta de mapache">
+                        <!-- Orejas -->
+                        <path d="M16 34 L21 11 L40 24 Z" />
+                        <path d="M84 34 L79 11 L60 24 Z" />
+                        <!-- Cabeza / Mejillas -->
+                        <path d="M50 21 C32 21 15 35 12 52 C10 62 21 71 33 77 C41 81 45 86 50 86 C55 86 59 81 67 77 C79 71 90 62 88 52 C85 35 68 21 50 21 Z M32 43 C38 43 44 47 46 53 C42 58 34 61 25 59 C20 57 18 51 22 46 C25 44 28 43 32 43 Z M68 43 C72 43 75 44 78 46 C82 51 80 57 75 59 C66 61 58 58 54 53 C56 47 62 43 68 43 Z M50 79 C43 79 38 74 39 69 C40 65 45 63 50 63 C55 63 60 65 61 69 C62 74 57 79 50 79 Z" />
+                        <!-- Ojos -->
+                        <circle cx="33" cy="51" r="3.6" />
+                        <circle cx="67" cy="51" r="3.6" />
+                        <!-- Nariz -->
+                        <ellipse cx="50" cy="70" rx="5.2" ry="3.8" />
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-extrabold tracking-tight">AgendaTec</h1>
+                <p class="text-emerald-100 text-xs sm:text-sm mt-1">Control inteligente de juntas, alertas y asistencia</p>
+            </div>
+
+            <!-- Pestañas Login / Registro -->
+            <div class="flex border-b border-slate-100">
+                <button id="tab-login-btn" onclick="switchAuthTab('login')" class="flex-1 py-3.5 text-sm font-semibold text-emerald-600 border-b-2 border-emerald-600 transition">
+                    Iniciar Sesión
+                </button>
+                <button id="tab-register-btn" onclick="switchAuthTab('register')" class="flex-1 py-3.5 text-sm font-semibold text-slate-400 hover:text-slate-600 transition">
+                    Crear Cuenta
+                </button>
+            </div>
+
+            <!-- Formulario de Login -->
+            <form id="login-form" class="p-6 sm:p-8 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Nombre de Usuario</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-user absolute left-3.5 top-3.5 text-slate-400 text-sm"></i>
+                        <input type="text" id="login-username" required placeholder="Ingresa tu usuario" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">Contraseña</label>
+                    <div class="relative">
+                        <i class="fa-solid fa-lock absolute left-3.5 top-3.5 text-slate-400 text-sm"></i>
+                        <input type="password" id="login-password" required placeholder="••••••••" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                </div>
+                <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-200 transition active:scale-[0.99]">
+                    Entrar a mi Agenda
+                </button>
+
+                <!-- Acceso Rápido Demo (Solo usuario prueba) -->
+                <div class="pt-4 border-t border-slate-100">
+                    <p class="text-xs text-slate-400 text-center mb-2.5">Acceso rápido de prueba:</p>
+                    <div class="flex justify-center">
+                        <button type="button" onclick="quickLogin('carlos.m', '1234')" class="text-xs py-2 px-4 bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-lg border border-slate-200 font-medium transition">
+                            <i class="fa-solid fa-user-check mr-1 text-emerald-600"></i> Carlos M. (Usuario Prueba)
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Formulario de Registro -->
+            <form id="register-form" class="p-6 sm:p-8 space-y-3.5 hidden">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Nombre</label>
+                        <input type="text" id="reg-name" required placeholder="Ej. Laura" class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">Apellido</label>
+                        <input type="text" id="reg-lastname" required placeholder="Ej. Méndez" class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Puesto / Cargo</label>
+                    <input type="text" id="reg-role" required placeholder="Ej. Coordinadora de Operaciones" class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Nombre de Usuario (Único)</label>
+                    <input type="text" id="reg-username" required placeholder="Ej. laura.mendez" class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">Contraseña</label>
+                    <input type="password" id="reg-password" required placeholder="Crea una contraseña" class="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-200 transition mt-2">
+                    Registrar Usuario
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== VISTA 2: PANEL PRINCIPAL ==================== -->
+    <div id="app-view" class="hidden flex-1 flex flex-col">
+        <!-- Barra Superior -->
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+            <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-10 h-10 bg-emerald-600 text-white rounded-xl flex items-center justify-center p-1.5 shadow-sm shrink-0">
+                        <!-- Silueta de rostro de mapache -->
+                        <svg viewBox="0 0 100 100" class="w-full h-full fill-current text-white" aria-label="Silueta de mapache">
+                            <path d="M16 34 L21 11 L40 24 Z" />
+                            <path d="M84 34 L79 11 L60 24 Z" />
+                            <path d="M50 21 C32 21 15 35 12 52 C10 62 21 71 33 77 C41 81 45 86 50 86 C55 86 59 81 67 77 C79 71 90 62 88 52 C85 35 68 21 50 21 Z M32 43 C38 43 44 47 46 53 C42 58 34 61 25 59 C20 57 18 51 22 46 C25 44 28 43 32 43 Z M68 43 C72 43 75 44 78 46 C82 51 80 57 75 59 C66 61 58 58 54 53 C56 47 62 43 68 43 Z M50 79 C43 79 38 74 39 69 C40 65 45 63 50 63 C55 63 60 65 61 69 C62 74 57 79 50 79 Z" />
+                            <circle cx="33" cy="51" r="3.6" />
+                            <circle cx="67" cy="51" r="3.6" />
+                            <ellipse cx="50" cy="70" rx="5.2" ry="3.8" />
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-slate-900 text-sm sm:text-base leading-tight">AgendaTec</span>
+                            <span id="cloud-status-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span id="cloud-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                <span id="cloud-status-text">En línea</span>
+                            </span>
+                        </div>
+                        <p id="live-clock" class="text-[11px] text-slate-400 font-medium">Cargando reloj...</p>
+                    </div>
+                </div>
+
+                <!-- Controles y Perfil -->
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <button id="btn-install-pwa" onclick="triggerInstallPWA()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition">
+                        <i class="fa-solid fa-download"></i>
+                        <span class="hidden sm:inline">Instalar App</span>
+                    </button>
+
+                    <button id="btn-enable-notif" onclick="requestNativeNotifications()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-semibold transition border border-teal-200" title="Activar alarmas en pantalla bloqueada y segundo plano">
+                        <i class="fa-solid fa-bell"></i>
+                        <span class="hidden md:inline">Alarmas 2do Plano</span>
+                    </button>
+
+                    <button onclick="simulateUpcomingAlert()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-semibold transition border border-amber-200" title="Probar alerta de 10 minutos">
+                        <i class="fa-solid fa-bolt"></i>
+                        <span class="hidden md:inline">Probar Alarma</span>
+                    </button>
+
+                    <button onclick="switchMainTab('notifications')" class="relative p-2.5 text-slate-600 hover:bg-slate-100 rounded-xl transition">
+                        <i class="fa-regular fa-bell text-lg"></i>
+                        <span id="notif-badge" class="hidden absolute top-1.5 right-1.5 w-4 h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">0</span>
+                    </button>
+
+                    <div class="hidden sm:flex items-center gap-2 pl-2 border-l border-slate-200">
+                        <div class="text-right">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <p id="header-user-name" class="text-xs font-bold text-slate-800">Usuario</p>
+                                <span id="header-admin-badge" class="hidden px-1.5 py-0.5 text-[9px] font-extrabold uppercase bg-amber-100 text-amber-800 rounded border border-amber-200">Admin</span>
+                            </div>
+                            <p id="header-user-role" class="text-[11px] text-slate-500">Puesto</p>
+                        </div>
+                    </div>
+
+                    <button onclick="logout()" class="p-2.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition" title="Cerrar Sesión">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Navegación por Pestañas -->
+            <div class="max-w-6xl mx-auto px-4 flex gap-1 sm:gap-2 overflow-x-auto border-t border-slate-100">
+                <button onclick="switchMainTab('agenda')" id="nav-agenda" class="nav-tab px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 border-emerald-600 text-emerald-600 whitespace-nowrap flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-day"></i> Mi Agenda
+                </button>
+                <button onclick="switchMainTab('create')" id="nav-create" class="nav-tab px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap flex items-center gap-2">
+                    <i class="fa-solid fa-plus-circle"></i> Agendar Junta
+                </button>
+                <button onclick="switchMainTab('notifications')" id="nav-notifications" class="nav-tab px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap flex items-center gap-2">
+                    <i class="fa-solid fa-inbox"></i> Invitaciones
+                    <span id="nav-notif-count" class="hidden px-1.5 py-0.5 text-[10px] bg-rose-100 text-rose-600 rounded-full font-bold">0</span>
+                </button>
+                <button onclick="switchMainTab('reports')" id="nav-reports" class="nav-tab px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap flex items-center gap-2">
+                    <i class="fa-solid fa-chart-pie"></i> Mis Reportes
+                </button>
+                <button onclick="switchMainTab('admin')" id="nav-admin" class="hidden nav-tab px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 border-transparent text-amber-700 hover:text-amber-900 whitespace-nowrap flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved"></i> Administración
+                </button>
+            </div>
+        </header>
+
+        <!-- Contenido Principal -->
+        <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6">
+
+            <!-- SECCIÓN 1: MI AGENDA -->
+            <section id="section-agenda" class="space-y-6 animate-slide-in">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm">
+                    <div>
+                        <h2 class="text-lg sm:text-xl font-bold text-slate-900">Próximas Reuniones</h2>
+                        <p class="text-xs sm:text-sm text-slate-500">Alertas programadas automáticamente 10 min antes, 5 min antes y a la hora exacta.</p>
+                    </div>
+                    <button onclick="switchMainTab('create')" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl shadow-sm transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-plus"></i> Nueva Reunión
+                    </button>
+                </div>
+
+                <!-- Lista de Reuniones -->
+                <div id="meetings-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Renderizado dinámico -->
+                </div>
+            </section>
+
+            <!-- SECCIÓN 2: AGENDAR NUEVA JUNTA -->
+            <section id="section-create" class="hidden max-w-2xl mx-auto animate-slide-in">
+                <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 sm:p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-xl">
+                            <i class="fa-solid fa-calendar-plus"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">Agendar Nueva Junta</h2>
+                            <p class="text-xs text-slate-500">Todos los usuarios registrados se sincronizan automáticamente.</p>
+                        </div>
+                    </div>
+
+                    <form id="create-meeting-form" class="space-y-5">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Motivo o Tema de la Reunión</label>
+                            <input type="text" id="meeting-title" required placeholder="Ej. Revisión de presupuesto trimestral" class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Lugar o Sala / Enlace</label>
+                                <div class="relative">
+                                    <i class="fa-solid fa-location-dot absolute left-3.5 top-3 text-slate-400 text-sm"></i>
+                                    <input type="text" id="meeting-location" required placeholder="Ej. Sala de Juntas B / Meet" class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Fecha y Hora</label>
+                                <input type="datetime-local" id="meeting-datetime" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                        </div>
+
+                        <!-- APARTADO: QUIÉN CONVOCA -->
+                        <div class="bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80 space-y-3">
+                            <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                                <i class="fa-solid fa-bullhorn text-emerald-600 mr-1.5"></i> Quién Convoca
+                            </label>
+                            <select id="meeting-convener-select" onchange="toggleManualConvenerFields()" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                <!-- Opciones dinámicas de usuarios -->
+                            </select>
+
+                            <div id="manual-convener-fields" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-1">Nombre de quien convoca</label>
+                                    <input type="text" id="manual-convener-name" placeholder="Ej. Ing. Roberto Díaz" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-1">Puesto</label>
+                                    <input type="text" id="manual-convener-role" placeholder="Ej. Director General" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- APARTADO: A QUIÉNES VA DIRIGIDA LA JUNTA -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider">A quiénes va dirigida la junta</label>
+                                <span id="selected-users-count" class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full">0 seleccionados</span>
+                            </div>
+                            <p class="text-[11px] text-slate-500 mb-2">Selecciona usuarios registrados (incluyéndote si participarás):</p>
+                            <div id="participants-selector" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto p-3 rounded-2xl border border-slate-200 bg-slate-50/50">
+                                <!-- Checkboxes de usuarios registrados -->
+                            </div>
+
+                            <!-- Agregar participante manual sin cuenta -->
+                            <div class="mt-3 p-3.5 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/40">
+                                <p class="text-xs font-semibold text-emerald-800 mb-2 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-user-plus"></i> ¿No está en la lista? Agregar invitado manual (sin contraseña)
+                                </p>
+                                <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                                    <input type="text" id="manual-guest-name" placeholder="Nombre completo" class="sm:col-span-5 px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                    <input type="text" id="manual-guest-role" placeholder="Puesto / Área" class="sm:col-span-4 px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                    <button type="button" onclick="addManualGuest()" class="sm:col-span-3 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1">
+                                        <i class="fa-solid fa-plus"></i> Agregar
+                                    </button>
+                                </div>
+                                <div id="manual-guests-list" class="flex flex-wrap gap-1.5 mt-2.5"></div>
+                            </div>
+                        </div>
+
+                        <div class="pt-2 flex flex-col sm:flex-row gap-3">
+                            <button type="button" onclick="setQuickMeetingIn10Min()" class="py-3 px-4 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold rounded-xl border border-amber-200 transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-stopwatch"></i> Programar en 10 min (Prueba)
+                            </button>
+                            <button type="submit" class="flex-1 py-3 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-200 transition">
+                                Agendar y Notificar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- SECCIÓN 3: NOTIFICACIONES E INVITACIONES -->
+            <section id="section-notifications" class="hidden max-w-3xl mx-auto space-y-4 animate-slide-in">
+                <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-900">Invitaciones y Confirmaciones</h2>
+                        <p class="text-xs text-slate-500">Confirma si asistirás, indica el motivo de tu ausencia o marca si no pudiste acudir de último momento.</p>
+                    </div>
+                </div>
+                <div id="notifications-list" class="space-y-3">
+                    <!-- Lista dinámica -->
+                </div>
+            </section>
+
+            <!-- SECCIÓN 4: REPORTES POR PERIODO (USUARIO ACTUAL) -->
+            <section id="section-reports" class="hidden space-y-6 animate-slide-in">
+                <div class="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-sm">
+                    <h2 class="text-lg font-bold text-slate-900 mb-1">Mis Reportes de Reuniones</h2>
+                    <p class="text-xs text-slate-500 mb-4">Selecciona un rango de fechas para analizar tus reuniones organizadas y convocadas.</p>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">Fecha Inicio</label>
+                            <input type="date" id="report-start" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">Fecha Fin</label>
+                            <input type="date" id="report-end" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <button onclick="generateReport()" class="py-2.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-filter"></i> Generar Reporte
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Tarjetas de Resumen -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                        <span class="text-xs font-medium text-slate-500">Total en Periodo</span>
+                        <p id="stat-total" class="text-2xl font-extrabold text-slate-900 mt-1">0</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                        <span class="text-xs font-medium text-emerald-600">Organizadas</span>
+                        <p id="stat-organized" class="text-2xl font-extrabold text-emerald-700 mt-1">0</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                        <span class="text-xs font-medium text-teal-600">Asistencia Confirmada</span>
+                        <p id="stat-accepted" class="text-2xl font-extrabold text-teal-700 mt-1">0</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+                        <span class="text-xs font-medium text-rose-600">No Asistió / Rechazadas</span>
+                        <p id="stat-declined" class="text-2xl font-extrabold text-rose-700 mt-1">0</p>
+                    </div>
+                </div>
+
+                <!-- Tabla Detallada del Reporte -->
+                <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
+                    <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+                        <h3 class="font-bold text-slate-800 text-sm">Desglose de Reuniones en el Periodo</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                                    <th class="py-3 px-4 font-semibold">Fecha y Hora</th>
+                                    <th class="py-3 px-4 font-semibold">Motivo / Tema</th>
+                                    <th class="py-3 px-4 font-semibold">Convoca / Lugar</th>
+                                    <th class="py-3 px-4 font-semibold">Estado</th>
+                                    <th class="py-3 px-4 font-semibold">Detalle / Motivo</th>
+                                </tr>
+                            </thead>
+                            <tbody id="report-table-body" class="divide-y divide-slate-100 text-sm">
+                                <!-- Filas dinámicas -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECCIÓN 5: PANEL EXCLUSIVO DE ADMINISTRACIÓN -->
+            <section id="section-admin" class="hidden space-y-6 animate-slide-in">
+                <!-- Gestión de Usuarios -->
+                <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
+                    <div class="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-amber-50/50">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 text-[10px] font-extrabold uppercase bg-amber-200 text-amber-900 rounded-md">Exclusivo Admin</span>
+                                <h2 class="text-lg font-bold text-slate-900">Control de Usuarios Registrados</h2>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-0.5">Visualiza todos los usuarios del sistema y modifica sus nombres, puestos o contraseñas.</p>
+                        </div>
+                        <span id="admin-users-count" class="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full self-start sm:self-center">0 usuarios</span>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                                    <th class="py-3 px-4 font-semibold">Nombre Completo</th>
+                                    <th class="py-3 px-4 font-semibold">Puesto</th>
+                                    <th class="py-3 px-4 font-semibold">Usuario</th>
+                                    <th class="py-3 px-4 font-semibold">Contraseña</th>
+                                    <th class="py-3 px-4 font-semibold text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-users-table-body" class="divide-y divide-slate-100 text-sm">
+                                <!-- Filas dinámicas de usuarios -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Historial Global de Reuniones -->
+                <div class="bg-white rounded-3xl border border-slate-200/80 shadow-sm overflow-hidden">
+                    <div class="p-5 sm:p-6 border-b border-slate-100">
+                        <h2 class="text-lg font-bold text-slate-900 mb-1">Historial Global de Reuniones</h2>
+                        <p class="text-xs text-slate-500 mb-4">Consulta el historial de juntas por rango de fechas para un usuario específico o para todos los usuarios.</p>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Fecha Inicio</label>
+                                <input type="date" id="admin-report-start" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Fecha Fin</label>
+                                <input type="date" id="admin-report-end" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Filtrar por Usuario</label>
+                                <select id="admin-report-user" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm bg-white focus:ring-2 focus:ring-emerald-500">
+                                    <option value="ALL">Todos los usuarios</option>
+                                </select>
+                            </div>
+                            <button onclick="generateAdminHistory()" class="py-2.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-magnifying-glass"></i> Consultar Historial
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                        <span class="text-xs font-semibold text-slate-600">Resultados encontrados:</span>
+                        <span id="admin-history-count" class="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">0 reuniones</span>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
+                                    <th class="py-3 px-4 font-semibold">Fecha y Hora</th>
+                                    <th class="py-3 px-4 font-semibold">Reunión y Lugar</th>
+                                    <th class="py-3 px-4 font-semibold">Convocó / Agendó</th>
+                                    <th class="py-3 px-4 font-semibold">Participantes y Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-history-table-body" class="divide-y divide-slate-100 text-sm">
+                                <!-- Filas dinámicas del historial -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- ==================== LÓGICA DE APLICACIÓN + OFFLINE-FIRST + ALARMAS ==================== -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // -------------------- 1. CONFIGURACIÓN PWA, SERVICE WORKER Y NOTIFICACIONES EN 2DO PLANO --------------------
+        let swRegistration = null;
+
+        (function setupPWAAndServiceWorker() {
+            const manifest = {
+                name: "AgendaTec - Gestión de Juntas",
+                short_name: "AgendaTec",
+                start_url: ".",
+                display: "standalone",
+                background_color: "#f8fafc",
+                theme_color: "#059669",
+                description: "Agenda de juntas con alertas en segundo plano y sincronización offline.",
+                icons: [
+                    { src: "https://placehold.co/192x192/059669/ffffff.png?text=AT", sizes: "192x192", type: "image/png" },
+                    { src: "https://placehold.co/512x512/059669/ffffff.png?text=AT", sizes: "512x512", type: "image/png" }
+                ]
+            };
+            const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+            const manifestURL = URL.createObjectURL(manifestBlob);
+            const link = document.createElement('link');
+            link.rel = 'manifest';
+            link.href = manifestURL;
+            document.head.appendChild(link);
+
+            // Registrar Service Worker para alarmas persistentes y funcionamiento con pantalla bloqueada
+            if ('serviceWorker' in navigator) {
+                const swCode = `
+                    const CACHE_NAME = 'agendatec-shell-v2';
+                    self.addEventListener('install', (event) => {
+                        self.skipWaiting();
+                    });
+                    self.addEventListener('activate', (event) => {
+                        event.waitUntil(self.clients.claim());
+                    });
+                    self.addEventListener('notificationclick', (event) => {
+                        event.notification.close();
+                        event.waitUntil(
+                            self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+                                for (const client of clientList) {
+                                    if ('focus' in client) return client.focus();
+                                }
+                                if (self.clients.openWindow) return self.clients.openWindow('./');
+                            })
+                        );
+                    });
+                    self.addEventListener('message', (event) => {
+                        if (event.data && event.data.type === 'SHOW_ALARM') {
+                            const { title, body, tag } = event.data;
+                            self.registration.showNotification(title, {
+                                body,
+                                tag,
+                                icon: 'https://placehold.co/192x192/059669/ffffff.png?text=AT',
+                                badge: 'https://placehold.co/96x96/059669/ffffff.png?text=!',
+                                vibrate: [500, 200, 500, 200, 800, 200, 800],
+                                requireInteraction: true,
+                                renotify: true,
+                                silent: false,
+                                actions: [
+                                    { action: 'open', title: 'Abrir AgendaTec' }
+                                ]
+                            });
+                        }
+                    });
+                `;
+                try {
+                    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(swBlob);
+                    navigator.serviceWorker.register(swUrl).then(reg => {
+                        swRegistration = reg;
+                    }).catch(() => {});
+                } catch (e) {}
+            }
+        })();
+
+        let deferredPrompt = null;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            const installBtn = document.getElementById('btn-install-pwa');
+            if (installBtn) {
+                installBtn.classList.remove('hidden');
+                installBtn.classList.add('flex');
+            }
+        });
+
+        window.triggerInstallPWA = async () => {
+            if (!deferredPrompt) {
+                showToast('Para instalar en tu celular: abre el menú del navegador (⋮) y selecciona "Agregar a pantalla de inicio".', 'info');
+                return;
+            }
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                document.getElementById('btn-install-pwa').classList.add('hidden');
+            }
+            deferredPrompt = null;
+        };
+
+        window.requestNativeNotifications = async () => {
+            if (!('Notification' in window)) {
+                showToast('Este navegador no soporta notificaciones del sistema.', 'warning');
+                return;
+            }
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+                showToast('¡Alarmas en segundo plano activadas! Sonarán incluso fuera de la app o con pantalla bloqueada.', 'success');
+                const btn = document.getElementById('btn-enable-notif');
+                if (btn) {
+                    btn.classList.remove('bg-teal-50', 'text-teal-800', 'border-teal-200');
+                    btn.classList.add('bg-emerald-50', 'text-emerald-700', 'border-emerald-200');
+                    btn.innerHTML = '<i class="fa-solid fa-bell-ring"></i><span class="hidden md:inline">Alarmas Activas</span>';
+                }
+                // Prueba inmediata de notificación nativa
+                triggerSystemAlarmNotification('Alarmas de AgendaTec Activas', 'Recibirás alertas sonoras y vibración en pantalla bloqueada antes de cada junta.', 'agendatec-ready');
+            } else {
+                showToast('Permiso de notificaciones denegado. Actívalo en los ajustes del navegador para recibir alarmas.', 'warning');
+            }
+        };
+
+        function triggerSystemAlarmNotification(title, body, tag) {
+            if (!('Notification' in window) || Notification.permission !== 'granted') return;
+            try {
+                if (navigator.vibrate) {
+                    navigator.vibrate([500, 200, 500, 200, 800]);
+                }
+                if (swRegistration && swRegistration.active) {
+                    swRegistration.active.postMessage({
+                        type: 'SHOW_ALARM',
+                        title,
+                        body,
+                        tag
+                    });
+                } else {
+                    new Notification(title, {
+                        body,
+                        tag,
+                        icon: 'https://placehold.co/192x192/059669/ffffff.png?text=AT',
+                        requireInteraction: true,
+                        renotify: true
+                    });
+                }
+            } catch (e) {}
+        }
+
+        // -------------------- 2. BASE DE DATOS LOCAL PERSISTENTE (INDEXEDDB) --------------------
+        // Nombre fijo 'AgendaTecDB_v2' para conservar siempre usuarios, juntas y registros entre actualizaciones
+        const LocalDB = {
+            dbName: 'AgendaTecDB_v2',
+            version: 1,
+            db: null,
+            async init() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open(this.dbName, this.version);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains('users')) db.createObjectStore('users', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('meetings')) db.createObjectStore('meetings', { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains('syncQueue')) db.createObjectStore('syncQueue', { keyPath: 'opId', autoIncrement: true });
+                        if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+                    };
+                    req.onsuccess = (e) => {
+                        this.db = e.target.result;
+                        resolve(this.db);
+                    };
+                    req.onerror = (e) => reject(e.target.error);
+                });
+            },
+            async getAll(storeName) {
+                if (!this.db) await this.init();
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readonly');
+                    const req = tx.objectStore(storeName).getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]);
+                });
+            },
+            async put(storeName, item) {
+                if (!this.db) await this.init();
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    tx.objectStore(storeName).put(item);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            },
+            async delete(storeName, key) {
+                if (!this.db) await this.init();
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    tx.objectStore(storeName).delete(key);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            },
+            async clear(storeName) {
+                if (!this.db) await this.init();
+                return new Promise((resolve) => {
+                    const tx = this.db.transaction(storeName, 'readwrite');
+                    tx.objectStore(storeName).clear();
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            }
+        };
+
+        // -------------------- 3. ESTADO GLOBAL Y SINCRONIZACIÓN HÍBRIDA --------------------
+        // ID fijo de aplicación para mantener los datos sincronizados entre actualizaciones
+        const FIXED_CLOUD_APP_ID = 'agendatec-prod-v1';
+        let db = null;
+        let auth = null;
+        let firebaseUser = null;
+        let useCloud = false;
+        let isOnline = navigator.onLine;
+        let isSyncingQueue = false;
+
+        let state = {
+            currentUser: null,
+            users: [],
+            meetings: [],
+            triggeredAlerts: {},
+            manualGuests: [],
+            pendingQueueCount: 0
+        };
+
+        const DEFAULT_USERS = [
+            { id: 'u_admin', name: 'Administrador', lastname: 'Sistema', role: 'Administrador General', username: 'admin', password: 'superadmi1', isAdmin: true },
+            { id: 'u1', name: 'Carlos', lastname: 'Mendoza', role: 'Director de Proyectos', username: 'carlos.m', password: '1234', isAdmin: false }
+        ];
+
+        function updateConnectionUI() {
+            const authDot = document.getElementById('auth-sync-dot');
+            const authText = document.getElementById('auth-sync-text');
+            const badge = document.getElementById('cloud-status-badge');
+            const dot = document.getElementById('cloud-status-dot');
+            const text = document.getElementById('cloud-status-text');
+
+            const pendingText = state.pendingQueueCount > 0 ? ` (${state.pendingQueueCount} pend.)` : '';
+
+            if (isOnline && useCloud && firebaseUser) {
+                if (authDot) authDot.className = 'w-2 h-2 rounded-full bg-emerald-300';
+                if (authText) authText.textContent = 'En línea y sincronizado';
+                if (badge) badge.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+                if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+                if (text) text.textContent = 'En línea' + pendingText;
+            } else if (!isOnline) {
+                if (authDot) authDot.className = 'w-2 h-2 rounded-full bg-amber-300';
+                if (authText) authText.textContent = 'Modo sin conexión';
+                if (badge) badge.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200';
+                if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
+                if (text) text.textContent = 'Sin conexión' + pendingText;
+            } else {
+                if (authDot) authDot.className = 'w-2 h-2 rounded-full bg-teal-300';
+                if (authText) authText.textContent = 'Agenda Local Activa';
+                if (badge) badge.className = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200';
+                if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-teal-500';
+                if (text) text.textContent = 'Local' + pendingText;
+            }
+        }
+
+        async function enqueueSyncOperation(collectionName, docId, payload, action = 'upsert') {
+            await LocalDB.put('syncQueue', {
+                collectionName,
+                docId,
+                payload,
+                action,
+                timestamp: Date.now()
+            });
+            const q = await LocalDB.getAll('syncQueue');
+            state.pendingQueueCount = q.length;
+            updateConnectionUI();
+            if (isOnline && useCloud && firebaseUser) {
+                processSyncQueue();
+            }
+        }
+
+        async function processSyncQueue() {
+            if (isSyncingQueue || !isOnline || !useCloud || !firebaseUser) return;
+            isSyncingQueue = true;
+            try {
+                const queue = await LocalDB.getAll('syncQueue');
+                if (queue.length === 0) {
+                    state.pendingQueueCount = 0;
+                    updateConnectionUI();
+                    return;
+                }
+                for (const item of queue) {
+                    try {
+                        const ref = doc(db, 'artifacts', FIXED_CLOUD_APP_ID, 'public', 'data', item.collectionName, item.docId);
+                        if (item.action === 'delete') {
+                            await deleteDoc(ref);
+                        } else {
+                            await setDoc(ref, item.payload, { merge: true });
+                        }
+                        await LocalDB.delete('syncQueue', item.opId);
+                    } catch (err) {
+                        break;
+                    }
+                }
+                const remaining = await LocalDB.getAll('syncQueue');
+                state.pendingQueueCount = remaining.length;
+                updateConnectionUI();
+                if (remaining.length === 0 && queue.length > 0) {
+                    showToast('¡Conexión restablecida! Agenda sincronizada con la nube.', 'success');
+                }
+            } finally {
+                isSyncingQueue = false;
+            }
+        }
+
+        window.addEventListener('online', () => {
+            isOnline = true;
+            updateConnectionUI();
+            showToast('Conexión a Internet detectada. Sincronizando agenda...', 'info');
+            processSyncQueue();
+        });
+
+        window.addEventListener('offline', () => {
+            isOnline = false;
+            updateConnectionUI();
+            showToast('Sin conexión a Internet. Puedes seguir trabajando; tus cambios se sincronizarán al volver la señal.', 'warning');
+        });
+
+        async function saveUser(userObj) {
+            const idx = state.users.findIndex(u => u.id === userObj.id);
+            if (idx >= 0) state.users[idx] = userObj;
+            else state.users.push(userObj);
+
+            await LocalDB.put('users', userObj);
+            refreshUI();
+            await enqueueSyncOperation('agendatec_users', userObj.id, userObj, 'upsert');
+        }
+
+        async function saveMeeting(meetingObj) {
+            const idx = state.meetings.findIndex(m => m.id === meetingObj.id);
+            if (idx >= 0) state.meetings[idx] = meetingObj;
+            else state.meetings.push(meetingObj);
+
+            await LocalDB.put('meetings', meetingObj);
+            refreshUI();
+            await enqueueSyncOperation('agendatec_meetings', meetingObj.id, meetingObj, 'upsert');
+        }
+
+        async function removeMeeting(meetingId) {
+            state.meetings = state.meetings.filter(m => m.id !== meetingId);
+            await LocalDB.delete('meetings', meetingId);
+            refreshUI();
+            await enqueueSyncOperation('agendatec_meetings', meetingId, null, 'delete');
+        }
+
+        async function persistTriggeredAlerts() {
+            await LocalDB.put('meta', { key: 'triggeredAlerts', value: state.triggeredAlerts });
+        }
+
+        async function initApp() {
+            await LocalDB.init();
+            const localUsers = await LocalDB.getAll('users');
+            const localMeetings = await LocalDB.getAll('meetings');
+            const queue = await LocalDB.getAll('syncQueue');
+            const metaAlerts = await LocalDB.getAll('meta');
+
+            state.pendingQueueCount = queue.length;
+            const alertRecord = metaAlerts.find(m => m.key === 'triggeredAlerts');
+            if (alertRecord && alertRecord.value) {
+                state.triggeredAlerts = alertRecord.value;
+            }
+
+            if (localUsers.length > 0) {
+                state.users = localUsers;
+                for (const defU of DEFAULT_USERS) {
+                    if (!state.users.some(u => u.username.toLowerCase() === defU.username.toLowerCase())) {
+                        state.users.push(defU);
+                        await LocalDB.put('users', defU);
+                    }
+                }
+            } else {
+                state.users = [...DEFAULT_USERS];
+                for (const u of state.users) {
+                    await LocalDB.put('users', u);
+                }
+            }
+
+            state.meetings = localMeetings;
+
+            const savedSession = sessionStorage.getItem('agendatec_session_user');
+            if (savedSession) {
+                try {
+                    const parsed = JSON.parse(savedSession);
+                    const found = state.users.find(u => u.id === parsed.id);
+                    if (found) state.currentUser = found;
+                } catch (e) {}
+            }
+
+            updateConnectionUI();
+            if (state.currentUser) showDashboard();
+
+            try {
+                if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                    const firebaseConfig = JSON.parse(__firebase_config);
+                    const app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+                    useCloud = true;
+
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+
+                    onAuthStateChanged(auth, async (user) => {
+                        firebaseUser = user;
+                        updateConnectionUI();
+                        if (user) {
+                            await processSyncQueue();
+                            startRealtimeSync();
+                        }
+                    });
+                }
+            } catch (err) {
+                useCloud = false;
+                updateConnectionUI();
+            }
+        }
+
+        function startRealtimeSync() {
+            if (!useCloud || !firebaseUser) return;
+
+            const usersCol = collection(db, 'artifacts', FIXED_CLOUD_APP_ID, 'public', 'data', 'agendatec_users');
+            onSnapshot(usersCol, async (snapshot) => {
+                if (snapshot.empty) {
+                    for (const u of state.users) {
+                        await setDoc(doc(db, 'artifacts', FIXED_CLOUD_APP_ID, 'public', 'data', 'agendatec_users', u.id), u);
+                    }
+                } else {
+                    const cloudUsers = [];
+                    snapshot.forEach(docSnap => cloudUsers.push(docSnap.data()));
+
+                    const userMap = new Map();
+                    state.users.forEach(u => userMap.set(u.id, u));
+                    cloudUsers.forEach(u => userMap.set(u.id, u));
+
+                    for (const defU of DEFAULT_USERS) {
+                        if (!Array.from(userMap.values()).some(u => u.username.toLowerCase() === defU.username.toLowerCase())) {
+                            userMap.set(defU.id, defU);
+                            await setDoc(doc(db, 'artifacts', FIXED_CLOUD_APP_ID, 'public', 'data', 'agendatec_users', defU.id), defU);
+                        }
+                    }
+
+                    state.users = Array.from(userMap.values());
+                    for (const u of state.users) {
+                        await LocalDB.put('users', u);
+                    }
+
+                    if (state.currentUser) {
+                        const updatedSelf = state.users.find(u => u.id === state.currentUser.id);
+                        if (updatedSelf) {
+                            state.currentUser = updatedSelf;
+                            sessionStorage.setItem('agendatec_session_user', JSON.stringify(updatedSelf));
+                        }
+                    }
+                    refreshUI();
+                }
+                updateConnectionUI();
+            }, () => {});
+
+            const meetingsCol = collection(db, 'artifacts', FIXED_CLOUD_APP_ID, 'public', 'data', 'agendatec_meetings');
+            onSnapshot(meetingsCol, async (snapshot) => {
+                const cloudMeetings = [];
+                snapshot.forEach(docSnap => cloudMeetings.push(docSnap.data()));
+
+                const pendingOps = await LocalDB.getAll('syncQueue');
+                const pendingMeetingIds = new Set(pendingOps.filter(op => op.collectionName === 'agendatec_meetings').map(op => op.docId));
+
+                const meetingMap = new Map();
+                // Priorizar la nube si no está pendiente localmente
+                cloudMeetings.forEach(m => {
+                    if (!pendingMeetingIds.has(m.id)) {
+                        meetingMap.set(m.id, m);
+                    }
+                });
+                // Conservar los pendientes locales que aún no suben
+                state.meetings.forEach(m => {
+                    if (pendingMeetingIds.has(m.id)) {
+                        meetingMap.set(m.id, m);
+                    }
+                });
+
+                state.meetings = Array.from(meetingMap.values());
+                await LocalDB.clear('meetings');
+                for (const m of state.meetings) {
+                    await LocalDB.put('meetings', m);
+                }
+                refreshUI();
+            }, () => {});
+        }
+
+        function refreshUI() {
+            if (!state.currentUser) return;
+            document.getElementById('header-user-name').textContent = `${state.currentUser.name} ${state.currentUser.lastname}`;
+            document.getElementById('header-user-role').textContent = state.currentUser.role;
+            renderConvenerSelector();
+            renderParticipantsSelector();
+            renderMeetings();
+            renderNotifications();
+            generateReport();
+            if (isAdminUser()) {
+                renderAdminUsersTable();
+                populateAdminUserFilter();
+                generateAdminHistory();
+            }
+        }
+
+        function isAdminUser() {
+            return state.currentUser && (state.currentUser.isAdmin === true || state.currentUser.username.toLowerCase() === 'admin');
+        }
+
+        function isUserAccountAdmin(u) {
+            return u && (u.isAdmin === true || (u.username && u.username.toLowerCase() === 'admin'));
+        }
+
+        // -------------------- 4. DETECCIÓN DE CONFLICTOS Y DESPLAZAMIENTO DE ALERTAS (+1 MINUTO) --------------------
+        function checkScheduleConflictForUser(userId, targetDatetimeStr, ignoreMeetingId = null) {
+            if (!userId || !targetDatetimeStr) return null;
+            const targetTime = new Date(targetDatetimeStr).getTime();
+            if (isNaN(targetTime)) return null;
+
+            const userScheduledMeetings = state.meetings.filter(m => {
+                if (m.id === ignoreMeetingId) return false;
+                if (m.status === 'cancelled') return false;
+                if (m.creatorId === userId) return true;
+                const p = (m.participants || []).find(part => part.userId === userId && !part.isManual);
+                return p && p.status !== 'declined' && p.status !== 'no_show';
+            });
+
+            return userScheduledMeetings.find(m => new Date(m.datetime).getTime() === targetTime) || null;
+        }
+
+        let confirmModalResolver = null;
+        window.showScheduleConflictModal = (existingMeeting, contextLabel = 'agendar esta reunión') => {
+            return new Promise((resolve) => {
+                confirmModalResolver = resolve;
+                const d = new Date(existingMeeting.datetime);
+                const timeStr = d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                const dateStr = d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' });
+                const shiftedTimeStr = new Date(d.getTime() + 60000).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+
+                document.getElementById('confirm-modal-icon').className = 'w-11 h-11 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl shrink-0';
+                document.getElementById('confirm-modal-icon').innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+                document.getElementById('confirm-modal-title').textContent = 'Ya tienes una reunión a esa hora';
+                document.getElementById('confirm-modal-subtitle').textContent = 'Conflicto de horario detectado';
+                document.getElementById('confirm-modal-accept-btn').className = 'flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition';
+                document.getElementById('confirm-modal-accept-btn').textContent = 'Sí, continuar (+1 min)';
+
+                document.getElementById('confirm-modal-body').innerHTML = `
+                    <p>Ya cuentas con la reunión <strong>"${existingMeeting.title}"</strong> programada para el <strong>${dateStr} a las ${timeStr}</strong>.</p>
+                    <p class="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 mt-2">
+                        <i class="fa-solid fa-bell mr-1"></i> Si decides ${contextLabel}, sus alertas (10 min antes, 5 min antes y hora exacta) se ajustarán automáticamente <strong>1 minuto después</strong> (hora base: <strong>${shiftedTimeStr}</strong>) para que no se empalmen.
+                    </p>
+                `;
+                document.getElementById('confirm-modal').classList.remove('hidden');
+            });
+        };
+
+        window.showCustomConfirmModal = ({ title, subtitle, message, confirmText = 'Confirmar', danger = false }) => {
+            return new Promise((resolve) => {
+                confirmModalResolver = resolve;
+                document.getElementById('confirm-modal-icon').className = danger
+                    ? 'w-11 h-11 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl shrink-0'
+                    : 'w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl shrink-0';
+                document.getElementById('confirm-modal-icon').innerHTML = danger
+                    ? '<i class="fa-solid fa-trash-can"></i>'
+                    : '<i class="fa-solid fa-circle-question"></i>';
+                document.getElementById('confirm-modal-title').textContent = title;
+                document.getElementById('confirm-modal-subtitle').textContent = subtitle || '';
+                document.getElementById('confirm-modal-accept-btn').className = danger
+                    ? 'flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl text-sm shadow-sm transition'
+                    : 'flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition';
+                document.getElementById('confirm-modal-accept-btn').textContent = confirmText;
+                document.getElementById('confirm-modal-body').innerHTML = `<p>${message}</p>`;
+                document.getElementById('confirm-modal').classList.remove('hidden');
+            });
+        };
+
+        window.closeConfirmModal = (accepted) => {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            if (confirmModalResolver) {
+                const fn = confirmModalResolver;
+                confirmModalResolver = null;
+                fn(accepted);
+            }
+        };
+
+        // -------------------- 5. AUTENTICACIÓN Y REGISTRO --------------------
+        window.switchAuthTab = (tab) => {
+            const loginForm = document.getElementById('login-form');
+            const regForm = document.getElementById('register-form');
+            const btnLogin = document.getElementById('tab-login-btn');
+            const btnReg = document.getElementById('tab-register-btn');
+
+            if (tab === 'login') {
+                loginForm.classList.remove('hidden');
+                regForm.classList.add('hidden');
+                btnLogin.className = 'flex-1 py-3.5 text-sm font-semibold text-emerald-600 border-b-2 border-emerald-600 transition';
+                btnReg.className = 'flex-1 py-3.5 text-sm font-semibold text-slate-400 hover:text-slate-600 transition';
+            } else {
+                loginForm.classList.add('hidden');
+                regForm.classList.remove('hidden');
+                btnReg.className = 'flex-1 py-3.5 text-sm font-semibold text-emerald-600 border-b-2 border-emerald-600 transition';
+                btnLogin.className = 'flex-1 py-3.5 text-sm font-semibold text-slate-400 hover:text-slate-600 transition';
+            }
+        };
+
+        window.quickLogin = (username, password) => {
+            document.getElementById('login-username').value = username;
+            document.getElementById('login-password').value = password;
+            document.getElementById('login-form').dispatchEvent(new Event('submit'));
+        };
+
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('reg-name').value.trim();
+            const lastname = document.getElementById('reg-lastname').value.trim();
+            const role = document.getElementById('reg-role').value.trim();
+            const username = document.getElementById('reg-username').value.trim().toLowerCase();
+            const password = document.getElementById('reg-password').value;
+
+            const exists = state.users.some(u => u.username.toLowerCase() === username);
+            if (exists) {
+                showToast('El nombre de usuario "' + username + '" ya está en uso. Elige otro.', 'error');
+                return;
+            }
+
+            const newUser = {
+                id: 'u_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                name,
+                lastname,
+                role,
+                username,
+                password,
+                isAdmin: false
+            };
+
+            await saveUser(newUser);
+            showToast(isOnline ? 'Usuario registrado y sincronizado con todos los dispositivos.' : 'Usuario registrado localmente. Se sincronizará al volver el internet.', 'success');
+            document.getElementById('register-form').reset();
+            switchAuthTab('login');
+            document.getElementById('login-username').value = username;
+        });
+
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = document.getElementById('login-username').value.trim().toLowerCase();
+            const password = document.getElementById('login-password').value;
+
+            const user = state.users.find(u => u.username.toLowerCase() === username && u.password === password);
+            if (!user) {
+                showToast('Usuario o contraseña incorrectos.', 'error');
+                return;
+            }
+
+            state.currentUser = user;
+            sessionStorage.setItem('agendatec_session_user', JSON.stringify(user));
+            showDashboard();
+            showToast(`Bienvenido(a), ${user.name}`, 'success');
+        });
+
+        window.logout = () => {
+            state.currentUser = null;
+            sessionStorage.removeItem('agendatec_session_user');
+            document.getElementById('app-view').classList.add('hidden');
+            document.getElementById('auth-view').classList.remove('hidden');
+            document.getElementById('login-form').reset();
+        };
+
+        function showDashboard() {
+            document.getElementById('auth-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+
+            document.getElementById('header-user-name').textContent = `${state.currentUser.name} ${state.currentUser.lastname}`;
+            document.getElementById('header-user-role').textContent = state.currentUser.role;
+
+            const adminBadge = document.getElementById('header-admin-badge');
+            const adminNavTab = document.getElementById('nav-admin');
+            if (isAdminUser()) {
+                adminBadge.classList.remove('hidden');
+                adminNavTab.classList.remove('hidden');
+            } else {
+                adminBadge.classList.add('hidden');
+                adminNavTab.classList.add('hidden');
+            }
+
+            const now = new Date();
+            const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+            document.getElementById('report-start').value = firstDay;
+            document.getElementById('report-end').value = lastDay;
+
+            if (isAdminUser()) {
+                document.getElementById('admin-report-start').value = firstDay;
+                document.getElementById('admin-report-end').value = lastDay;
+            }
+
+            const defaultMeeting = new Date(now.getTime() + 60 * 60000);
+            defaultMeeting.setMinutes(0, 0, 0);
+            document.getElementById('meeting-datetime').value = toLocalDatetimeString(defaultMeeting);
+
+            state.manualGuests = [];
+            renderManualGuests();
+            renderConvenerSelector();
+            renderParticipantsSelector();
+            renderMeetings();
+            renderNotifications();
+            generateReport();
+            if (isAdminUser()) {
+                renderAdminUsersTable();
+                populateAdminUserFilter();
+                generateAdminHistory();
+            }
+            switchMainTab('agenda');
+
+            // Si ya tiene permiso de notificaciones, actualizar botón
+            if ('Notification' in window && Notification.permission === 'granted') {
+                const btn = document.getElementById('btn-enable-notif');
+                if (btn) {
+                    btn.classList.remove('bg-teal-50', 'text-teal-800', 'border-teal-200');
+                    btn.classList.add('bg-emerald-50', 'text-emerald-700', 'border-emerald-200');
+                    btn.innerHTML = '<i class="fa-solid fa-bell-ring"></i><span class="hidden md:inline">Alarmas Activas</span>';
+                }
+            }
+        }
+
+        // -------------------- 6. NAVEGACIÓN PRINCIPAL --------------------
+        window.switchMainTab = (tabName) => {
+            if (tabName === 'admin' && !isAdminUser()) {
+                showToast('Acceso denegado: solo el administrador puede ver esta sección.', 'error');
+                return;
+            }
+
+            ['agenda', 'create', 'notifications', 'reports', 'admin'].forEach(sec => {
+                const sectionEl = document.getElementById(`section-${sec}`);
+                const navEl = document.getElementById(`nav-${sec}`);
+                if (sectionEl) sectionEl.classList.add('hidden');
+                if (navEl) {
+                    navEl.classList.remove('border-emerald-600', 'text-emerald-600', 'border-amber-600', 'text-amber-700');
+                    navEl.classList.add('border-transparent', sec === 'admin' ? 'text-amber-700' : 'text-slate-500');
+                }
+            });
+
+            const activeSec = document.getElementById(`section-${tabName}`);
+            const activeNav = document.getElementById(`nav-${tabName}`);
+            if (activeSec) activeSec.classList.remove('hidden');
+            if (activeNav) {
+                activeNav.classList.remove('border-transparent', 'text-slate-500');
+                if (tabName === 'admin') {
+                    activeNav.classList.add('border-amber-600', 'text-amber-700');
+                } else {
+                    activeNav.classList.add('border-emerald-600', 'text-emerald-600');
+                }
+            }
+
+            if (tabName === 'create') {
+                renderConvenerSelector();
+                renderParticipantsSelector();
+            }
+            if (tabName === 'reports') generateReport();
+            if (tabName === 'admin' && isAdminUser()) {
+                renderAdminUsersTable();
+                populateAdminUserFilter();
+                generateAdminHistory();
+            }
+        };
+
+        // -------------------- 7. AGENDAR JUNTA (CONVOCANTE, PARTICIPANTES E INVITADOS MANUALES) --------------------
+        function renderConvenerSelector() {
+            const select = document.getElementById('meeting-convener-select');
+            if (!select || !state.currentUser) return;
+
+            const currentVal = select.value;
+            const visibleUsers = state.users.filter(u => !isUserAccountAdmin(u));
+            const sortedUsers = [...visibleUsers].sort((a, b) => {
+                if (a.id === state.currentUser.id) return -1;
+                if (b.id === state.currentUser.id) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            select.innerHTML = sortedUsers.map(u => {
+                const isSelf = u.id === state.currentUser.id;
+                return `<option value="${u.id}">${u.name} ${u.lastname} (${u.role})${isSelf ? ' - Tú' : ''}</option>`;
+            }).join('') + `<option value="MANUAL">+ No está en la lista (Agregar nombre y puesto manual)</option>`;
+
+            if (currentVal && (currentVal === 'MANUAL' || sortedUsers.some(u => u.id === currentVal))) {
+                select.value = currentVal;
+            } else if (!isUserAccountAdmin(state.currentUser)) {
+                select.value = state.currentUser.id;
+            } else {
+                select.value = sortedUsers.length > 0 ? sortedUsers[0].id : 'MANUAL';
+            }
+            toggleManualConvenerFields();
+        }
+
+        window.toggleManualConvenerFields = () => {
+            const select = document.getElementById('meeting-convener-select');
+            const manualBox = document.getElementById('manual-convener-fields');
+            const nameInput = document.getElementById('manual-convener-name');
+            const roleInput = document.getElementById('manual-convener-role');
+
+            if (select.value === 'MANUAL') {
+                manualBox.classList.remove('hidden');
+                nameInput.required = true;
+                roleInput.required = true;
+            } else {
+                manualBox.classList.add('hidden');
+                nameInput.required = false;
+                roleInput.required = false;
+            }
+        };
+
+        function renderParticipantsSelector() {
+            const container = document.getElementById('participants-selector');
+            if (!container || !state.currentUser) return;
+
+            const previouslyChecked = new Set(
+                Array.from(document.querySelectorAll('.participant-checkbox:checked')).map(cb => cb.value)
+            );
+            const isFirstRender = container.children.length === 0;
+
+            const visibleUsers = state.users.filter(u => !isUserAccountAdmin(u));
+            const sortedUsers = [...visibleUsers].sort((a, b) => {
+                if (a.id === state.currentUser.id) return -1;
+                if (b.id === state.currentUser.id) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            container.innerHTML = sortedUsers.map(u => {
+                const isSelf = u.id === state.currentUser.id;
+                const checkedAttr = (isFirstRender && isSelf) || previouslyChecked.has(u.id) ? 'checked' : '';
+                return `
+                    <label class="flex items-center gap-3 p-2.5 bg-white rounded-xl border ${isSelf ? 'border-emerald-300 bg-emerald-50/40' : 'border-slate-200'} hover:border-emerald-400 cursor-pointer transition">
+                        <input type="checkbox" value="${u.id}" ${checkedAttr} onchange="updateSelectedCount()" class="participant-checkbox w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500">
+                        <div class="overflow-hidden flex-1">
+                            <div class="flex items-center gap-1.5">
+                                <p class="text-xs font-bold text-slate-800 truncate">${u.name} ${u.lastname}</p>
+                                ${isSelf ? '<span class="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 rounded-md shrink-0">Tú</span>' : ''}
+                            </div>
+                            <p class="text-[11px] text-slate-500 truncate">${u.role}</p>
+                        </div>
+                    </label>
+                `;
+            }).join('');
+            updateSelectedCount();
+        }
+
+        window.addManualGuest = () => {
+            const nameInput = document.getElementById('manual-guest-name');
+            const roleInput = document.getElementById('manual-guest-role');
+            const name = nameInput.value.trim();
+            const role = roleInput.value.trim();
+
+            if (!name || !role) {
+                showToast('Ingresa el nombre y el puesto del invitado manual.', 'warning');
+                return;
+            }
+
+            state.manualGuests.push({
+                userId: 'manual_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
+                name,
+                role,
+                isManual: true
+            });
+
+            nameInput.value = '';
+            roleInput.value = '';
+            renderManualGuests();
+            updateSelectedCount();
+        };
+
+        window.removeManualGuest = (index) => {
+            state.manualGuests.splice(index, 1);
+            renderManualGuests();
+            updateSelectedCount();
+        };
+
+        function renderManualGuests() {
+            const listEl = document.getElementById('manual-guests-list');
+            if (!listEl) return;
+            listEl.innerHTML = state.manualGuests.map((g, idx) => `
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-white border border-emerald-200 text-emerald-800 shadow-xs">
+                    <i class="fa-solid fa-user-tag text-emerald-600 text-[10px]"></i>
+                    ${g.name} <span class="text-slate-400">(${g.role})</span>
+                    <button type="button" onclick="removeManualGuest(${idx})" class="ml-1 text-slate-400 hover:text-rose-600">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </span>
+            `).join('');
+        }
+
+        window.updateSelectedCount = () => {
+            const checked = document.querySelectorAll('.participant-checkbox:checked').length;
+            const total = checked + state.manualGuests.length;
+            document.getElementById('selected-users-count').textContent = `${total} seleccionados`;
+        };
+
+        window.setQuickMeetingIn10Min = () => {
+            const in10Min = new Date(Date.now() + 10 * 60000 + 8000);
+            document.getElementById('meeting-datetime').value = toLocalDatetimeString(in10Min);
+            showToast('Hora ajustada a 10 minutos a partir de ahora para probar la alerta.', 'info');
+        };
+
+        document.getElementById('create-meeting-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('meeting-title').value.trim();
+            const location = document.getElementById('meeting-location').value.trim();
+            const datetime = document.getElementById('meeting-datetime').value;
+            const selectedBoxes = Array.from(document.querySelectorAll('.participant-checkbox:checked'));
+
+            if (selectedBoxes.length === 0 && state.manualGuests.length === 0) {
+                showToast('Debes seleccionar o agregar al menos un participante para la junta.', 'error');
+                return;
+            }
+
+            const convenerSelect = document.getElementById('meeting-convener-select').value;
+            let convenerName = '';
+            let convenerRole = '';
+            if (convenerSelect === 'MANUAL') {
+                convenerName = document.getElementById('manual-convener-name').value.trim();
+                convenerRole = document.getElementById('manual-convener-role').value.trim();
+                if (!convenerName || !convenerRole) {
+                    showToast('Ingresa el nombre y puesto de quien convoca.', 'warning');
+                    return;
+                }
+            } else {
+                const convUser = state.users.find(u => u.id === convenerSelect) || state.currentUser;
+                convenerName = `${convUser.name} ${convUser.lastname}`;
+                convenerRole = convUser.role;
+            }
+
+            // Verificar conflicto de horario para el usuario actual
+            let alertOffsetMinutes = 0;
+            const existingConflict = checkScheduleConflictForUser(state.currentUser.id, datetime);
+            if (existingConflict) {
+                const proceed = await showScheduleConflictModal(existingConflict, 'agendar esta nueva reunión');
+                if (!proceed) return;
+                alertOffsetMinutes = 1;
+            }
+
+            const registeredParticipants = selectedBoxes.map(cb => {
+                const isSelf = cb.value === state.currentUser.id;
+                return {
+                    userId: cb.value,
+                    status: isSelf ? 'accepted' : 'pending',
+                    reason: '',
+                    isManual: false,
+                    alertOffsetMinutes: isSelf ? alertOffsetMinutes : 0
+                };
+            });
+
+            const manualParticipants = state.manualGuests.map(g => ({
+                userId: g.userId,
+                name: g.name,
+                role: g.role,
+                status: 'accepted',
+                reason: '',
+                isManual: true,
+                alertOffsetMinutes: 0
+            }));
+
+            const newMeeting = {
+                id: 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                creatorId: state.currentUser.id,
+                creatorName: `${state.currentUser.name} ${state.currentUser.lastname}`,
+                convenerName,
+                convenerRole,
+                title,
+                location,
+                datetime,
+                status: 'active',
+                creatorAlertOffsetMinutes: alertOffsetMinutes,
+                participants: [...registeredParticipants, ...manualParticipants],
+                createdAt: new Date().toISOString()
+            };
+
+            await saveMeeting(newMeeting);
+            document.getElementById('create-meeting-form').reset();
+            state.manualGuests = [];
+            renderManualGuests();
+            renderConvenerSelector();
+            renderParticipantsSelector();
+
+            if (alertOffsetMinutes > 0) {
+                showToast('Reunión agendada. Tus alarmas sonarán 1 minuto después de la junta previa.', 'success');
+            } else {
+                showToast(isOnline ? 'Reunión agendada y notificaciones enviadas.' : 'Reunión guardada localmente. Se enviará cuando vuelva el internet.', 'success');
+            }
+            switchMainTab('agenda');
+        });
+
+        // -------------------- 8. MODIFICAR, CANCELAR Y ELIMINAR REUNIONES (CREADOR) --------------------
+        window.openEditMeetingModal = (meetingId) => {
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting || meeting.creatorId !== state.currentUser.id) return;
+
+            document.getElementById('edit-meeting-id').value = meeting.id;
+            document.getElementById('edit-meeting-title').value = meeting.title;
+            document.getElementById('edit-meeting-location').value = meeting.location;
+            document.getElementById('edit-meeting-datetime').value = meeting.datetime;
+            document.getElementById('edit-meeting-status').value = meeting.status === 'cancelled' ? 'cancelled' : 'active';
+
+            const currentRegIds = new Set((meeting.participants || []).filter(p => !p.isManual).map(p => p.userId));
+            const visibleUsers = state.users.filter(u => !isUserAccountAdmin(u));
+            const sortedUsers = [...visibleUsers].sort((a, b) => a.name.localeCompare(b.name));
+
+            document.getElementById('edit-meeting-participants-list').innerHTML = sortedUsers.map(u => {
+                const checked = currentRegIds.has(u.id) ? 'checked' : '';
+                return `
+                    <label class="flex items-center gap-2.5 p-2 bg-white rounded-xl border border-slate-200 cursor-pointer text-xs">
+                        <input type="checkbox" value="${u.id}" ${checked} class="edit-participant-cb w-4 h-4 text-emerald-600 rounded">
+                        <span class="font-semibold text-slate-800">${u.name} ${u.lastname}</span>
+                        <span class="text-slate-400">(${u.role})</span>
+                    </label>
+                `;
+            }).join('');
+
+            document.getElementById('edit-meeting-modal').classList.remove('hidden');
+        };
+
+        window.closeEditMeetingModal = () => {
+            document.getElementById('edit-meeting-modal').classList.add('hidden');
+        };
+
+        document.getElementById('edit-meeting-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const meetingId = document.getElementById('edit-meeting-id').value;
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting || meeting.creatorId !== state.currentUser.id) return;
+
+            const newTitle = document.getElementById('edit-meeting-title').value.trim();
+            const newLocation = document.getElementById('edit-meeting-location').value.trim();
+            const newDatetime = document.getElementById('edit-meeting-datetime').value;
+            const newStatus = document.getElementById('edit-meeting-status').value;
+
+            const selectedIds = Array.from(document.querySelectorAll('.edit-participant-cb:checked')).map(cb => cb.value);
+            const manualOnes = (meeting.participants || []).filter(p => p.isManual);
+
+            if (selectedIds.length === 0 && manualOnes.length === 0) {
+                showToast('Debe haber al menos un participante en la reunión.', 'error');
+                return;
+            }
+
+            const updatedRegParticipants = selectedIds.map(uid => {
+                const existing = (meeting.participants || []).find(p => p.userId === uid && !p.isManual);
+                if (existing) return existing;
+                const isSelf = uid === state.currentUser.id;
+                return {
+                    userId: uid,
+                    status: isSelf ? 'accepted' : 'pending',
+                    reason: '',
+                    isManual: false,
+                    alertOffsetMinutes: 0
+                };
+            });
+
+            // Si cambió la fecha/hora, limpiar alertas previas disparadas para esta junta
+            if (meeting.datetime !== newDatetime) {
+                Object.keys(state.triggeredAlerts).forEach(k => {
+                    if (k.startsWith(meeting.id + '_')) delete state.triggeredAlerts[k];
+                });
+                await persistTriggeredAlerts();
+            }
+
+            const updatedMeeting = {
+                ...meeting,
+                title: newTitle,
+                location: newLocation,
+                datetime: newDatetime,
+                status: newStatus,
+                participants: [...updatedRegParticipants, ...manualOnes],
+                updatedAt: new Date().toISOString()
+            };
+
+            await saveMeeting(updatedMeeting);
+            closeEditMeetingModal();
+            showToast(newStatus === 'cancelled' ? 'La reunión ha sido marcada como CANCELADA.' : 'Reunión actualizada correctamente.', 'success');
+        });
+
+        window.quickCancelMeeting = async (meetingId) => {
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting || meeting.creatorId !== state.currentUser.id) return;
+
+            const confirmed = await showCustomConfirmModal({
+                title: '¿Cancelar esta reunión?',
+                subtitle: meeting.title,
+                message: 'La reunión quedará marcada como CANCELADA en la agenda de todos los invitados y sus alarmas quedarán desactivadas.',
+                confirmText: 'Sí, cancelar junta',
+                danger: true
+            });
+            if (!confirmed) return;
+
+            const updatedMeeting = {
+                ...meeting,
+                status: 'cancelled',
+                updatedAt: new Date().toISOString()
+            };
+            await saveMeeting(updatedMeeting);
+            showToast('Reunión marcada como cancelada.', 'warning');
+        };
+
+        window.deleteMeetingById = async (meetingId) => {
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting || meeting.creatorId !== state.currentUser.id) return;
+
+            const confirmed = await showCustomConfirmModal({
+                title: '¿Eliminar reunión definitivamente?',
+                subtitle: meeting.title,
+                message: 'Esta acción borrará la reunión por completo de tu agenda y de la de todos los participantes.',
+                confirmText: 'Eliminar',
+                danger: true
+            });
+            if (!confirmed) return;
+
+            await removeMeeting(meetingId);
+            showToast('Reunión eliminada.', 'info');
+        };
+
+        window.deleteMeetingFromEdit = async () => {
+            const meetingId = document.getElementById('edit-meeting-id').value;
+            closeEditMeetingModal();
+            await deleteMeetingById(meetingId);
+        };
+
+        // -------------------- 9. RENDERIZADO DE AGENDA Y NOTIFICACIONES --------------------
+        function getUserRelevantMeetings() {
+            if (!state.currentUser) return [];
+            const uid = state.currentUser.id;
+            return state.meetings.filter(m =>
+                m.creatorId === uid || (m.participants && m.participants.some(p => p.userId === uid))
+            ).sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+        }
+
+        function renderMeetings() {
+            const container = document.getElementById('meetings-list');
+            const myMeetings = getUserRelevantMeetings();
+            const now = new Date();
+
+            if (myMeetings.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full bg-white rounded-3xl p-10 text-center border border-slate-200/80">
+                        <div class="w-14 h-14 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl">
+                            <i class="fa-regular fa-calendar-xmark"></i>
+                        </div>
+                        <h3 class="font-bold text-slate-800">No tienes reuniones programadas</h3>
+                        <p class="text-xs text-slate-500 mt-1">Haz clic en "Nueva Reunión" para agendar tu primera junta.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = myMeetings.map(m => {
+                const mDate = new Date(m.datetime);
+                const isPast = mDate < now;
+                const isCancelled = m.status === 'cancelled';
+                const isCreator = m.creatorId === state.currentUser.id;
+                const myParticipant = (m.participants || []).find(p => p.userId === state.currentUser.id);
+
+                const effectiveOffset = isCreator
+                    ? (m.creatorAlertOffsetMinutes || (myParticipant ? myParticipant.alertOffsetMinutes : 0) || 0)
+                    : (myParticipant ? (myParticipant.alertOffsetMinutes || 0) : 0);
+
+                let statusBadge = '';
+                if (isCancelled) {
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200"><i class="fa-solid fa-ban mr-1"></i>Cancelada</span>`;
+                } else if (isCreator) {
+                    statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Creada por ti</span>`;
+                } else if (myParticipant) {
+                    if (myParticipant.status === 'accepted') {
+                        statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-teal-50 text-teal-700 border border-teal-200">Asistirás</span>`;
+                    } else if (myParticipant.status === 'declined') {
+                        statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">Rechazada</span>`;
+                    } else if (myParticipant.status === 'no_show') {
+                        statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-orange-50 text-orange-700 border border-orange-200">No asistí (último momento)</span>`;
+                    } else {
+                        statusBadge = `<span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">Pendiente</span>`;
+                    }
+                }
+
+                const participantsHtml = (m.participants || []).map(p => {
+                    let displayName = '';
+                    let badgeExtra = '';
+                    if (p.isManual) {
+                        displayName = p.name;
+                        badgeExtra = ' (Invitado)';
+                    } else {
+                        const u = state.users.find(user => user.id === p.userId);
+                        displayName = u ? `${u.name} ${u.lastname}` : 'Usuario';
+                    }
+
+                    let icon = '<i class="fa-regular fa-clock text-amber-500"></i>';
+                    if (p.status === 'accepted') icon = '<i class="fa-solid fa-circle-check text-emerald-600"></i>';
+                    if (p.status === 'declined' || p.status === 'no_show') icon = '<i class="fa-solid fa-circle-xmark text-rose-500"></i>';
+
+                    return `
+                        <div class="flex items-center justify-between text-xs py-1">
+                            <span class="text-slate-700 font-medium flex items-center gap-1.5">${icon} ${displayName}<span class="text-[10px] text-slate-400">${badgeExtra}</span></span>
+                            <span class="text-[11px] text-slate-400">
+                                ${p.status === 'accepted' ? 'Confirmado' : (p.status === 'no_show' ? 'No asistió: ' + (p.reason || '') : (p.status === 'declined' ? 'No asiste: ' + p.reason : 'Sin respuesta'))}
+                            </span>
+                        </div>
+                    `;
+                }).join('');
+
+                const convenerDisplay = m.convenerName
+                    ? `${m.convenerName} (${m.convenerRole || ''})`
+                    : m.creatorName;
+
+                // Botones de acción para el creador de la reunión
+                const creatorActionsHtml = isCreator ? `
+                    <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-2 justify-end">
+                        <button onclick="openEditMeetingModal('${m.id}')" class="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-semibold rounded-xl text-xs transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-pen"></i> Modificar
+                        </button>
+                        ${!isCancelled ? `
+                            <button onclick="quickCancelMeeting('${m.id}')" class="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-semibold rounded-xl text-xs transition flex items-center gap-1.5">
+                                <i class="fa-solid fa-ban"></i> Cancelar Junta
+                            </button>
+                        ` : ''}
+                        <button onclick="deleteMeetingById('${m.id}')" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-xl text-xs transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-trash-can"></i> Eliminar
+                        </button>
+                    </div>
+                ` : '';
+
+                // Botón post-reunión si confirmó pero ya pasó y no pudo asistir
+                const postMeetingNoShowHtml = (!isCreator && !isCancelled && isPast && myParticipant && myParticipant.status === 'accepted') ? `
+                    <div class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
+                        <button onclick="openRejectModal('${m.id}', 'no_show')" class="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 font-semibold rounded-xl text-xs transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-user-xmark"></i> No asistí (último momento)
+                        </button>
+                    </div>
+                ` : '';
+
+                return `
+                    <div class="bg-white rounded-3xl p-5 border ${isCancelled ? 'border-rose-200 bg-rose-50/20' : (isPast ? 'border-slate-200 opacity-85' : 'border-slate-200/90 shadow-sm')} flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-start justify-between gap-2 mb-3">
+                                <div>
+                                    <span class="text-[11px] font-bold uppercase tracking-wider ${isCancelled ? 'text-rose-600' : (isPast ? 'text-slate-400' : 'text-emerald-600')}">
+                                        ${isCancelled ? 'Reunión Cancelada' : (isPast ? 'Finalizada' : 'Programada')}
+                                    </span>
+                                    <h3 class="font-bold text-slate-900 text-base mt-0.5 ${isCancelled ? 'line-through text-slate-500' : ''}">${m.title}</h3>
+                                </div>
+                                ${statusBadge}
+                            </div>
+
+                            ${effectiveOffset > 0 && !isCancelled ? `
+                                <div class="mb-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 font-medium flex items-center gap-1.5">
+                                    <i class="fa-solid fa-clock-rotate-left text-amber-600"></i>
+                                    <span>Alarmas ajustadas +1 min por empalme de horario</span>
+                                </div>
+                            ` : ''}
+
+                            <div class="space-y-1.5 text-xs text-slate-600 mb-4 bg-slate-50 p-3.5 rounded-2xl">
+                                <div class="flex items-center gap-2">
+                                    <i class="fa-regular fa-calendar text-emerald-600 w-4"></i>
+                                    <span class="font-semibold text-slate-800">${formatDateTime(m.datetime)}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <i class="fa-solid fa-location-dot text-emerald-600 w-4"></i>
+                                    <span>${m.location}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <i class="fa-solid fa-bullhorn text-emerald-600 w-4"></i>
+                                    <span>Convoca: <strong>${convenerDisplay}</strong></span>
+                                </div>
+                            </div>
+
+                            <div class="border-t border-slate-100 pt-3">
+                                <p class="text-[11px] font-bold uppercase text-slate-400 mb-1.5">Participantes (${(m.participants || []).length})</p>
+                                <div class="divide-y divide-slate-50 max-h-32 overflow-y-auto">
+                                    ${participantsHtml}
+                                </div>
+                            </div>
+                        </div>
+
+                        ${creatorActionsHtml}
+                        ${postMeetingNoShowHtml}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderNotifications() {
+            const container = document.getElementById('notifications-list');
+            const badge = document.getElementById('notif-badge');
+            const navBadge = document.getElementById('nav-notif-count');
+            const uid = state.currentUser.id;
+            const now = new Date();
+
+            const invitations = state.meetings.filter(m =>
+                m.participants && m.participants.some(p => p.userId === uid && !p.isManual)
+            ).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+            const pendingCount = invitations.filter(m =>
+                m.status !== 'cancelled' && m.participants.find(p => p.userId === uid).status === 'pending'
+            ).length;
+
+            if (pendingCount > 0) {
+                badge.textContent = pendingCount;
+                badge.classList.remove('hidden');
+                navBadge.textContent = pendingCount;
+                navBadge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+                navBadge.classList.add('hidden');
+            }
+
+            if (invitations.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-3xl p-10 text-center border border-slate-200/80">
+                        <p class="text-sm font-semibold text-slate-700">No tienes invitaciones recibidas</p>
+                        <p class="text-xs text-slate-400 mt-1">Cuando te inviten a una junta aparecerá aquí para confirmar tu asistencia.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = invitations.map(m => {
+                const myPart = m.participants.find(p => p.userId === uid);
+                const isCancelled = m.status === 'cancelled';
+                const isPast = new Date(m.datetime) < now;
+                const convenerText = m.convenerName ? `${m.convenerName} (${m.convenerRole || ''})` : m.creatorName;
+
+                let actionArea = '';
+                if (isCancelled) {
+                    actionArea = `<div class="px-3.5 py-2 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold"><i class="fa-solid fa-ban mr-1.5"></i>Esta reunión fue cancelada por el organizador.</div>`;
+                } else if (myPart.status === 'pending') {
+                    actionArea = `
+                        <div class="flex flex-wrap gap-2 mt-3">
+                            <button onclick="acceptMeeting('${m.id}')" class="flex-1 py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-check"></i> Sí, asistiré
+                            </button>
+                            <button onclick="openRejectModal('${m.id}', 'declined')" class="flex-1 py-2 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-xl border border-rose-200 transition flex items-center justify-center gap-1.5">
+                                <i class="fa-solid fa-xmark"></i> No asistiré
+                            </button>
+                        </div>
+                    `;
+                } else if (myPart.status === 'accepted') {
+                    actionArea = `
+                        <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+                            <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200">
+                                <i class="fa-solid fa-circle-check"></i> Confirmaste que asistirás ${myPart.alertOffsetMinutes > 0 ? '(Alerta +1 min)' : ''}
+                            </span>
+                            ${isPast ? `
+                                <button onclick="openRejectModal('${m.id}', 'no_show')" class="py-1.5 px-3 bg-orange-50 hover:bg-orange-100 text-orange-800 text-xs font-semibold rounded-xl border border-orange-200 transition flex items-center gap-1.5">
+                                    <i class="fa-solid fa-user-xmark"></i> No asistí (último momento)
+                                </button>
+                            ` : `
+                                <button onclick="openRejectModal('${m.id}', 'declined')" class="py-1.5 px-3 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 text-xs font-semibold rounded-xl transition">
+                                    Cambiar a No asistiré
+                                </button>
+                            `}
+                        </div>
+                    `;
+                } else if (myPart.status === 'no_show') {
+                    actionArea = `
+                        <div class="mt-2 text-xs text-orange-800 bg-orange-50 px-3 py-2 rounded-xl border border-orange-200">
+                            <span class="font-semibold"><i class="fa-solid fa-user-xmark mr-1"></i> Marcaste que no pudiste asistir de último momento:</span> "${myPart.reason}"
+                        </div>
+                    `;
+                } else {
+                    actionArea = `
+                        <div class="mt-2 text-xs text-rose-700 bg-rose-50 px-3 py-2 rounded-xl border border-rose-200">
+                            <span class="font-semibold"><i class="fa-solid fa-circle-xmark mr-1"></i> Indicaste que no asistirás:</span> "${myPart.reason}"
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="bg-white p-5 rounded-3xl border ${!isCancelled && myPart.status === 'pending' ? 'border-emerald-300 shadow-sm' : 'border-slate-200/80'}">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                            <div>
+                                <span class="text-[11px] font-semibold text-emerald-600">Convoca: ${convenerText}</span>
+                                <h3 class="font-bold text-slate-900 text-base ${isCancelled ? 'line-through text-slate-500' : ''}">${m.title}</h3>
+                            </div>
+                            <span class="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1 rounded-full self-start sm:self-center">
+                                ${formatDateTime(m.datetime)}
+                            </span>
+                        </div>
+                        <p class="text-xs text-slate-500 mb-2"><i class="fa-solid fa-location-dot text-emerald-500 mr-1"></i> Lugar: ${m.location}</p>
+                        ${actionArea}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        window.acceptMeeting = async (meetingId) => {
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting) return;
+
+            let alertOffsetMinutes = 0;
+            const existingConflict = checkScheduleConflictForUser(state.currentUser.id, meeting.datetime, meeting.id);
+            if (existingConflict) {
+                const proceed = await showScheduleConflictModal(existingConflict, 'aceptar esta reunión');
+                if (!proceed) return;
+                alertOffsetMinutes = 1;
+            }
+
+            const updatedParticipants = meeting.participants.map(p => {
+                if (p.userId === state.currentUser.id) {
+                    return { ...p, status: 'accepted', reason: '', alertOffsetMinutes };
+                }
+                return p;
+            });
+
+            const updatedMeeting = { ...meeting, participants: updatedParticipants };
+            if (meeting.creatorId === state.currentUser.id && alertOffsetMinutes > 0) {
+                updatedMeeting.creatorAlertOffsetMinutes = alertOffsetMinutes;
+            }
+
+            await saveMeeting(updatedMeeting);
+            if (alertOffsetMinutes > 0) {
+                showToast('Asistencia confirmada. Tus alertas sonarán 1 minuto después de tu junta previa.', 'success');
+            } else {
+                showToast('Has confirmado tu asistencia a la reunión.', 'success');
+            }
+        };
+
+        window.openRejectModal = (meetingId, mode = 'declined') => {
+            document.getElementById('reject-meeting-id').value = meetingId;
+            document.getElementById('reject-mode').value = mode;
+            document.getElementById('reject-reason').value = '';
+            document.getElementById('reject-modal').classList.remove('hidden');
+        };
+
+        window.closeRejectModal = () => {
+            document.getElementById('reject-modal').classList.add('hidden');
+        };
+
+        window.confirmRejectMeeting = async () => {
+            const meetingId = document.getElementById('reject-meeting-id').value;
+            const mode = document.getElementById('reject-mode').value || 'declined';
+            const reason = document.getElementById('reject-reason').value.trim();
+
+            if (!reason) {
+                showToast('Por favor escribe el motivo por el cual no pudiste o no podrás asistir.', 'warning');
+                return;
+            }
+
+            const meeting = state.meetings.find(m => m.id === meetingId);
+            if (!meeting) return;
+
+            const updatedParticipants = meeting.participants.map(p => {
+                if (p.userId === state.currentUser.id) {
+                    return { ...p, status: mode, reason, alertOffsetMinutes: 0 };
+                }
+                return p;
+            });
+
+            await saveMeeting({ ...meeting, participants: updatedParticipants });
+            closeRejectModal();
+            showToast(mode === 'no_show' ? 'Se registró que no pudiste asistir de último momento.' : 'Se ha notificado tu inasistencia con el motivo indicado.', 'info');
+        };
+
+        // -------------------- 10. MOTOR DE ALERTAS Y ALARMAS PERSISTENTES (10 MIN, 5 MIN, HORA EXACTA) --------------------
+        let alarmAudioInterval = null;
+
+        function playAlarmSound() {
+            stopAlarmSound();
+            const triggerChime = () => {
+                try {
+                    if (typeof Tone !== 'undefined') {
+                        if (Tone.context.state !== 'running') Tone.start();
+                        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+                        const now = Tone.now();
+                        synth.triggerAttackRelease(["E5", "G#5", "B5"], "8n", now);
+                        synth.triggerAttackRelease(["B5", "E6"], "4n", now + 0.25);
+                    }
+                } catch (e) {}
+            };
+            triggerChime();
+            // Repetir el tono cada 3 segundos mientras la alarma esté activa en pantalla
+            alarmAudioInterval = setInterval(triggerChime, 3000);
+        }
+
+        function stopAlarmSound() {
+            if (alarmAudioInterval) {
+                clearInterval(alarmAudioInterval);
+                alarmAudioInterval = null;
+            }
+        }
+
+        function showCriticalAlarm(meeting, alertTypeLabel, descriptionText, alertKey) {
+            playAlarmSound();
+
+            // Lanzar notificación nativa del sistema con vibración (funciona en pantalla bloqueada / 2do plano)
+            triggerSystemAlarmNotification(
+                `⏰ ${alertTypeLabel}: ${meeting.title}`,
+                `${descriptionText} | Lugar: ${meeting.location} (${formatTimeOnly(meeting.datetime)})`,
+                alertKey || `alarm-${meeting.id}`
+            );
+
+            document.getElementById('alarm-badge').textContent = alertTypeLabel;
+            document.getElementById('alarm-title').textContent = meeting.title;
+            document.getElementById('alarm-desc').textContent = descriptionText;
+            document.getElementById('alarm-convener').textContent = meeting.convenerName
+                ? `${meeting.convenerName} (${meeting.convenerRole || ''})`
+                : meeting.creatorName;
+            document.getElementById('alarm-location').textContent = meeting.location;
+            document.getElementById('alarm-time').textContent = formatDateTime(meeting.datetime);
+            document.getElementById('alarm-modal').classList.remove('hidden');
+        }
+
+        window.dismissAlarm = () => {
+            stopAlarmSound();
+            document.getElementById('alarm-modal').classList.add('hidden');
+        };
+
+        window.simulateUpcomingAlert = () => {
+            const sampleMeeting = getUserRelevantMeetings().find(m => m.status !== 'cancelled') || {
+                id: 'demo_alert',
+                title: 'Revisión Operativa Semanal',
+                location: 'Sala de Juntas Principal',
+                creatorName: state.currentUser ? `${state.currentUser.name} ${state.currentUser.lastname}` : 'Coordinación',
+                convenerName: 'Dirección General',
+                convenerRole: 'Gerencia',
+                datetime: new Date(Date.now() + 10 * 60000).toISOString()
+            };
+            showCriticalAlarm(
+                sampleMeeting,
+                'Alerta: Faltan 10 Minutos',
+                'Tu reunión comenzará en 10 minutos. Prepárate para asistir.',
+                'sim-alert-' + Date.now()
+            );
+        };
+
+        setInterval(async () => {
+            const now = new Date();
+            const clockEl = document.getElementById('live-clock');
+            if (clockEl) {
+                clockEl.textContent = now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            }
+
+            if (!state.currentUser) return;
+
+            const uid = state.currentUser.id;
+            const myActiveMeetings = state.meetings.filter(m => {
+                if (m.status === 'cancelled') return false;
+                if (m.creatorId === uid) return true;
+                const p = (m.participants || []).find(part => part.userId === uid);
+                return p && p.status !== 'declined' && p.status !== 'no_show';
+            });
+
+            let alertsUpdated = false;
+
+            myActiveMeetings.forEach(m => {
+                const myPart = (m.participants || []).find(part => part.userId === uid);
+                const offsetMinutes = m.creatorId === uid
+                    ? (m.creatorAlertOffsetMinutes || (myPart ? myPart.alertOffsetMinutes : 0) || 0)
+                    : (myPart ? (myPart.alertOffsetMinutes || 0) : 0);
+
+                const effectiveTargetTime = new Date(m.datetime).getTime() + (offsetMinutes * 60000);
+                const diffSeconds = Math.floor((effectiveTargetTime - now.getTime()) / 1000);
+                const offsetNote = offsetMinutes > 0 ? ' (Alerta desplazada +1 min por reunión previa)' : '';
+
+                // 10 minutos antes (entre 600s y 595s)
+                if (diffSeconds <= 600 && diffSeconds > 594 && !state.triggeredAlerts[`${m.id}_10m`]) {
+                    state.triggeredAlerts[`${m.id}_10m`] = true;
+                    alertsUpdated = true;
+                    showCriticalAlarm(m, 'Alerta: 10 Minutos Antes', `Faltan 10 minutos para iniciar esta reunión.${offsetNote}`, `${m.id}_10m`);
+                }
+                // 5 minutos antes (entre 300s y 295s)
+                else if (diffSeconds <= 300 && diffSeconds > 294 && !state.triggeredAlerts[`${m.id}_5m`]) {
+                    state.triggeredAlerts[`${m.id}_5m`] = true;
+                    alertsUpdated = true;
+                    showCriticalAlarm(m, 'Segunda Alerta: 5 Minutos Antes', `Faltan solo 5 minutos para la reunión.${offsetNote}`, `${m.id}_5m`);
+                }
+                // Hora exacta (entre 0s y -5s)
+                else if (diffSeconds <= 0 && diffSeconds > -6 && !state.triggeredAlerts[`${m.id}_0m`]) {
+                    state.triggeredAlerts[`${m.id}_0m`] = true;
+                    alertsUpdated = true;
+                    showCriticalAlarm(m, '¡Hora Exacta de Reunión!', `La reunión está comenzando en este momento.${offsetNote}`, `${m.id}_0m`);
+                }
+            });
+
+            if (alertsUpdated) {
+                await persistTriggeredAlerts();
+            }
+        }, 1000);
+
+        // -------------------- 11. REPORTES POR PERIODO (USUARIO ACTUAL) --------------------
+        window.generateReport = () => {
+            const startVal = document.getElementById('report-start').value;
+            const endVal = document.getElementById('report-end').value;
+            const tbody = document.getElementById('report-table-body');
+
+            const startDate = startVal ? new Date(startVal + 'T00:00:00') : new Date('2000-01-01');
+            const endDate = endVal ? new Date(endVal + 'T23:59:59') : new Date('2100-01-01');
+
+            const filtered = getUserRelevantMeetings().filter(m => {
+                const d = new Date(m.datetime);
+                return d >= startDate && d <= endDate;
+            });
+
+            const uid = state.currentUser.id;
+            let organizedCount = 0;
+            let acceptedCount = 0;
+            let declinedCount = 0;
+
+            filtered.forEach(m => {
+                if (m.status === 'cancelled') return;
+                if (m.creatorId === uid) organizedCount++;
+                const p = (m.participants || []).find(part => part.userId === uid);
+                if (p) {
+                    if (p.status === 'accepted') acceptedCount++;
+                    if (p.status === 'declined' || p.status === 'no_show') declinedCount++;
+                }
+            });
+
+            document.getElementById('stat-total').textContent = filtered.length;
+            document.getElementById('stat-organized').textContent = organizedCount;
+            document.getElementById('stat-accepted').textContent = acceptedCount;
+            document.getElementById('stat-declined').textContent = declinedCount;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-xs text-slate-400">No se encontraron reuniones en el periodo seleccionado.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(m => {
+                const isCreator = m.creatorId === uid;
+                const isCancelled = m.status === 'cancelled';
+                const p = (m.participants || []).find(part => part.userId === uid);
+                let statusText = isCreator ? 'Organizador' : 'Invitado';
+                let badgeClass = 'bg-emerald-50 text-emerald-700';
+                let detailText = `${(m.participants || []).length} participantes`;
+
+                if (isCancelled) {
+                    statusText = 'Cancelada';
+                    badgeClass = 'bg-rose-100 text-rose-800';
+                    detailText = 'Reunión cancelada por el creador';
+                } else if (p) {
+                    if (p.status === 'accepted') { statusText = 'Asistió / Confirmada'; badgeClass = 'bg-teal-50 text-teal-700'; }
+                    if (p.status === 'declined') { statusText = 'No asistió (Rechazada)'; badgeClass = 'bg-rose-50 text-rose-700'; detailText = `Motivo: ${p.reason}`; }
+                    if (p.status === 'no_show') { statusText = 'No asistió (Último momento)'; badgeClass = 'bg-orange-50 text-orange-800'; detailText = `Motivo: ${p.reason}`; }
+                    if (p.status === 'pending' && !isCreator) { statusText = 'Sin confirmar'; badgeClass = 'bg-amber-50 text-amber-700'; }
+                }
+
+                const convenerInfo = m.convenerName ? `${m.convenerName} (${m.convenerRole || ''})` : m.creatorName;
+
+                return `
+                    <tr class="hover:bg-slate-50/80 transition">
+                        <td class="py-3.5 px-4 text-xs font-medium text-slate-700 whitespace-nowrap">${formatDateTime(m.datetime)}</td>
+                        <td class="py-3.5 px-4 text-xs font-bold text-slate-900 ${isCancelled ? 'line-through text-slate-400' : ''}">${m.title}</td>
+                        <td class="py-3.5 px-4 text-xs text-slate-600">
+                            <span class="font-medium text-slate-800">${convenerInfo}</span>
+                            <span class="block text-[11px] text-slate-400">${m.location}</span>
+                        </td>
+                        <td class="py-3.5 px-4 whitespace-nowrap">
+                            <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold ${badgeClass}">${statusText}</span>
+                        </td>
+                        <td class="py-3.5 px-4 text-xs text-slate-500">${detailText}</td>
+                    </tr>
+                `;
+            }).join('');
+        };
+
+        // -------------------- 12. PANEL EXCLUSIVO DE ADMINISTRADOR --------------------
+        function renderAdminUsersTable() {
+            if (!isAdminUser()) return;
+            const tbody = document.getElementById('admin-users-table-body');
+            const countEl = document.getElementById('admin-users-count');
+            if (!tbody) return;
+
+            countEl.textContent = `${state.users.length} usuarios`;
+
+            tbody.innerHTML = state.users.map(u => {
+                const isAdm = u.isAdmin === true || u.username.toLowerCase() === 'admin';
+                return `
+                    <tr class="hover:bg-slate-50/80 transition">
+                        <td class="py-3.5 px-4 text-xs font-bold text-slate-900">
+                            ${u.name} ${u.lastname}
+                            ${isAdm ? '<span class="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 rounded">Admin</span>' : ''}
+                        </td>
+                        <td class="py-3.5 px-4 text-xs text-slate-600">${u.role}</td>
+                        <td class="py-3.5 px-4 text-xs font-mono text-emerald-700 font-semibold">${u.username}</td>
+                        <td class="py-3.5 px-4 text-xs font-mono text-slate-600">${u.password}</td>
+                        <td class="py-3.5 px-4 text-right">
+                            <button onclick="openAdminEditUser('${u.id}')" class="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold rounded-xl text-xs border border-emerald-200 transition inline-flex items-center gap-1.5">
+                                <i class="fa-solid fa-pen-to-square"></i> Editar
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        window.openAdminEditUser = (userId) => {
+            if (!isAdminUser()) return;
+            const user = state.users.find(u => u.id === userId);
+            if (!user) return;
+
+            document.getElementById('edit-user-id').value = user.id;
+            document.getElementById('edit-user-name').value = user.name;
+            document.getElementById('edit-user-lastname').value = user.lastname;
+            document.getElementById('edit-user-role').value = user.role;
+            document.getElementById('edit-user-username').value = user.username;
+            document.getElementById('edit-user-password').value = user.password;
+            document.getElementById('admin-edit-user-modal').classList.remove('hidden');
+        };
+
+        window.closeAdminEditModal = () => {
+            document.getElementById('admin-edit-user-modal').classList.add('hidden');
+        };
+
+        document.getElementById('admin-edit-user-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!isAdminUser()) return;
+
+            const userId = document.getElementById('edit-user-id').value;
+            const user = state.users.find(u => u.id === userId);
+            if (!user) return;
+
+            const updatedUser = {
+                ...user,
+                name: document.getElementById('edit-user-name').value.trim(),
+                lastname: document.getElementById('edit-user-lastname').value.trim(),
+                role: document.getElementById('edit-user-role').value.trim(),
+                password: document.getElementById('edit-user-password').value
+            };
+
+            await saveUser(updatedUser);
+            if (updatedUser.id === state.currentUser.id) {
+                state.currentUser = updatedUser;
+                sessionStorage.setItem('agendatec_session_user', JSON.stringify(updatedUser));
+            }
+            closeAdminEditModal();
+            showToast('Datos y contraseña del usuario actualizados correctamente.', 'success');
+        });
+
+        function populateAdminUserFilter() {
+            if (!isAdminUser()) return;
+            const select = document.getElementById('admin-report-user');
+            if (!select) return;
+            const currentVal = select.value || 'ALL';
+
+            select.innerHTML = `<option value="ALL">Todos los usuarios</option>` +
+                state.users.map(u => `<option value="${u.id}">${u.name} ${u.lastname} (${u.username})</option>`).join('');
+
+            if (currentVal === 'ALL' || state.users.some(u => u.id === currentVal)) {
+                select.value = currentVal;
+            }
+        }
+
+        window.generateAdminHistory = () => {
+            if (!isAdminUser()) return;
+            const startVal = document.getElementById('admin-report-start').value;
+            const endVal = document.getElementById('admin-report-end').value;
+            const selectedUserId = document.getElementById('admin-report-user').value;
+            const tbody = document.getElementById('admin-history-table-body');
+            const countBadge = document.getElementById('admin-history-count');
+
+            const startDate = startVal ? new Date(startVal + 'T00:00:00') : new Date('2000-01-01');
+            const endDate = endVal ? new Date(endVal + 'T23:59:59') : new Date('2100-01-01');
+
+            const filtered = state.meetings.filter(m => {
+                const d = new Date(m.datetime);
+                const inDateRange = d >= startDate && d <= endDate;
+                if (!inDateRange) return false;
+                if (selectedUserId === 'ALL') return true;
+                return m.creatorId === selectedUserId || (m.participants && m.participants.some(p => p.userId === selectedUserId));
+            }).sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+
+            countBadge.textContent = `${filtered.length} reuniones`;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-xs text-slate-400">No hay reuniones registradas para los filtros seleccionados.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(m => {
+                const isCancelled = m.status === 'cancelled';
+                const convenerInfo = m.convenerName ? `${m.convenerName} (${m.convenerRole || ''})` : m.creatorName;
+                const participantsSummary = (m.participants || []).map(p => {
+                    const name = p.isManual
+                        ? `${p.name} (Invitado)`
+                        : (() => {
+                            const u = state.users.find(user => user.id === p.userId);
+                            return u ? `${u.name} ${u.lastname}` : 'Usuario';
+                        })();
+                    let badge = '<span class="text-amber-600">Pendiente</span>';
+                    if (p.status === 'accepted') badge = '<span class="text-emerald-600 font-semibold">Asiste</span>';
+                    if (p.status === 'declined') badge = `<span class="text-rose-600 font-semibold">No asiste (${p.reason || 'Sin motivo'})</span>`;
+                    if (p.status === 'no_show') badge = `<span class="text-orange-700 font-semibold">No asistió último momento (${p.reason || ''})</span>`;
+                    return `<div class="text-[11px] leading-relaxed">• <strong>${name}</strong>: ${badge}</div>`;
+                }).join('');
+
+                return `
+                    <tr class="hover:bg-slate-50/80 transition align-top">
+                        <td class="py-3.5 px-4 text-xs font-medium text-slate-700 whitespace-nowrap">${formatDateTime(m.datetime)}</td>
+                        <td class="py-3.5 px-4 text-xs">
+                            <p class="font-bold text-slate-900 ${isCancelled ? 'line-through text-slate-400' : ''}">${m.title}</p>
+                            <p class="text-[11px] text-slate-500 mt-0.5"><i class="fa-solid fa-location-dot text-emerald-600 mr-1"></i>${m.location}</p>
+                            ${isCancelled ? '<span class="inline-block mt-1 px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-800 rounded">CANCELADA</span>' : ''}
+                        </td>
+                        <td class="py-3.5 px-4 text-xs text-slate-600">
+                            <p class="font-semibold text-slate-800">Convoca: ${convenerInfo}</p>
+                            <p class="text-[11px] text-slate-400 mt-0.5">Agendó: ${m.creatorName}</p>
+                        </td>
+                        <td class="py-3.5 px-4 text-xs text-slate-600 space-y-0.5">
+                            ${participantsSummary || '<span class="text-slate-400">Sin participantes</span>'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        };
+
+        // -------------------- 13. UTILIDADES --------------------
+        function formatDateTime(isoStr) {
+            const d = new Date(isoStr);
+            return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) +
+                   ' • ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatTimeOnly(isoStr) {
+            const d = new Date(isoStr);
+            return d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function toLocalDatetimeString(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const styles = {
+                success: 'bg-emerald-600 text-white',
+                error: 'bg-rose-600 text-white',
+                warning: 'bg-amber-500 text-white',
+                info: 'bg-slate-800 text-white'
+            };
+            const icons = {
+                success: 'fa-circle-check',
+                error: 'fa-circle-exclamation',
+                warning: 'fa-triangle-exclamation',
+                info: 'fa-circle-info'
+            };
+            toast.className = `${styles[type] || styles.info} px-4 py-3 rounded-2xl shadow-lg text-xs font-medium flex items-center gap-2.5 pointer-events-auto animate-slide-in`;
+            toast.innerHTML = `<i class="fa-solid ${icons[type]} text-sm"></i><span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 3800);
+        }
+
+        // Iniciar aplicación
+        initApp();
+    </script>
+</body>
+</html>
